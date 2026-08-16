@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   apply:
-    runs-on: [self-hosted, llama-build]
+    runs-on: [self-hosted, coolify]
 
     steps:
       - uses: actions/checkout@v4
@@ -31,16 +31,20 @@ jobs:
           path = Path("tools/server/server-task.cpp")
           text = path.read_text()
 
-          old_size = '''    // calculate checkpoints size to see if it will fit with the prompt
-              size_t checkpoints_size = 0;
-              for (const auto & ckpt : prompt.checkpoints) {
-                  checkpoints_size += ckpt.size();
-              }
-
-              const size_t state_size_new = state_size_tgt + state_size_dft + checkpoints_size;'''.replace('              ', '    ')
-          new_size = '''    // Context checkpoints are slot-local rollback state for hybrid/recurrent
-              // models. Host prompt-cache entries deliberately do not persist them.
-              const size_t state_size_new = state_size_tgt + state_size_dft;'''.replace('              ', '    ')
+          old_size = (
+              "    // calculate checkpoints size to see if it will fit with the prompt\n"
+              "    size_t checkpoints_size = 0;\n"
+              "    for (const auto & ckpt : prompt.checkpoints) {\n"
+              "        checkpoints_size += ckpt.size();\n"
+              "    }\n"
+              "\n"
+              "    const size_t state_size_new = state_size_tgt + state_size_dft + checkpoints_size;"
+          )
+          new_size = (
+              "    // Context checkpoints are slot-local rollback state for hybrid/recurrent\n"
+              "    // models. Host prompt-cache entries deliberately do not persist them.\n"
+              "    const size_t state_size_new = state_size_tgt + state_size_dft;"
+          )
 
           if text.count(old_size) != 1:
               raise SystemExit(f"expected one checkpoint-size block, found {text.count(old_size)}")
@@ -73,7 +77,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-          # One-shot workflow: remove it from the resulting source tree.
+          # One-shot workflow: remove itself from the resulting source tree.
           git rm .github/workflows/apply-qwen-prompt-cache-fix.yml
           git add tools/server/server-task.cpp
           git diff --cached --check
