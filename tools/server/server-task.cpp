@@ -1716,13 +1716,9 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
         }
     }
 
-    // calculate checkpoints size to see if it will fit with the prompt
-    size_t checkpoints_size = 0;
-    for (const auto & ckpt : prompt.checkpoints) {
-        checkpoints_size += ckpt.size();
-    }
-
-    const size_t state_size_new = state_size_tgt + state_size_dft + checkpoints_size;
+    // Context checkpoints are slot-local rollback state for hybrid/recurrent
+    // models. Host prompt-cache entries deliberately do not persist them.
+    const size_t state_size_new = state_size_tgt + state_size_dft;
 
     // skip over-limit entries to avoid disturbing the cache
     if (limit_size > 0 && state_size_new > limit_size) {
@@ -1776,7 +1772,7 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
     states.push_back({
         /*.prompt =*/ {
             /*.tokens      =*/ prompt.tokens.clone(),
-            /*.checkpoints =*/ prompt.checkpoints,
+            /*.checkpoints =*/ {},
         },
         /*.data   =*/ {
             /*.main =*/ std::move(state_data_tgt),
