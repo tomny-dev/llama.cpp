@@ -1,0 +1,81 @@
+name: Apply Qwen prompt-cache RAM fix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/apply-qwen-prompt-cache-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: [self-hosted, llama-build]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Port prompt-cache RAM fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("tools/server/server-task.cpp")
+          text = path.read_text()
+
+          old_size = '''    // calculate checkpoints size to see if it will fit with the prompt
+              size_t checkpoints_size = 0;
+              for (const auto & ckpt : prompt.checkpoints) {
+                  checkpoints_size += ckpt.size();
+              }
+
+              const size_t state_size_new = state_size_tgt + state_size_dft + checkpoints_size;'''.replace('              ', '    ')
+          new_size = '''    // Context checkpoints are slot-local rollback state for hybrid/recurrent
+              // models. Host prompt-cache entries deliberately do not persist them.
+              const size_t state_size_new = state_size_tgt + state_size_dft;'''.replace('              ', '    ')
+
+          if text.count(old_size) != 1:
+              raise SystemExit(f"expected one checkpoint-size block, found {text.count(old_size)}")
+          text = text.replace(old_size, new_size, 1)
+
+          old_copy = '            /*.checkpoints =*/ prompt.checkpoints,'
+          new_copy = '            /*.checkpoints =*/ {},'
+          if text.count(old_copy) != 1:
+              raise SystemExit(f"expected one checkpoint cache copy, found {text.count(old_copy)}")
+          text = text.replace(old_copy, new_copy, 1)
+
+          path.write_text(text)
+          PY
+
+          # #25592 must already be present on master.
+          grep -q 'ctx_tgt_state_exact' tools/server/server-context.cpp
+
+          # #24649 functional invariants: cached states have no checkpoints and
+          # cache sizing excludes checkpoint memory that is not persisted.
+          grep -Fq '/*.checkpoints =*/ {},' tools/server/server-task.cpp
+          ! grep -q 'state_size_tgt + state_size_dft + checkpoints_size' tools/server/server-task.cpp
+
+          git diff --check
+          git diff -- tools/server/server-task.cpp
+
+      - name: Commit directly to master
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # One-shot workflow: remove it from the resulting source tree.
+          git rm .github/workflows/apply-qwen-prompt-cache-fix.yml
+          git add tools/server/server-task.cpp
+          git diff --cached --check
+          git commit -m 'server: prevent prompt-cache checkpoint RAM bloat'
+          git push origin master
